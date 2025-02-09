@@ -61,24 +61,6 @@ fn resolve_reference_path(base_path: &str, relative_path: &str) -> String {
     format!("/{}", base_parts.join("/"))
 }
 
-fn collect_absolute_paths(json: &Value, base_path: &str, context: &mut HashMap<String, String>) {
-    match json {
-        Value::Object(map) => {
-            for (key, value) in map {
-                let current_path = format!("{}/{}", base_path, key);
-                collect_absolute_paths(value, &current_path, context);
-            }
-        }
-        Value::String(text) => {
-            context.insert(base_path.to_string(), text.clone());
-        }
-        Value::Number(number) => {
-            context.insert(base_path.to_string(), number.to_string());
-        }
-        _ => {}
-    }
-}
-
 fn prepare_path_map(
     json: &Value,
     base_path: &str,
@@ -282,29 +264,6 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_absolute_paths() {
-        let input = json!({
-            "key1": "value1",
-            "key2": {
-                "nested1": "value2",
-                "nested2": {
-                    "deep": "value3"
-                }
-            }
-        });
-
-        let mut context = HashMap::new();
-        collect_absolute_paths(&input, "", &mut context);
-
-        assert_eq!(context.get("/key1"), Some(&"value1".to_string()));
-        assert_eq!(context.get("/key2/nested1"), Some(&"value2".to_string()));
-        assert_eq!(
-            context.get("/key2/nested2/deep"),
-            Some(&"value3".to_string())
-        );
-    }
-
-    #[test]
     fn test_convert_to_absolute_paths_with_one_invalid() {
         let input = json!({
             "posting_config": {
@@ -320,29 +279,6 @@ mod tests {
         let expected = json!({
             "posting_config": {
                 "published_message_caption": "Check this {/invite_group_link} or {/posting_config/invite_group_link}",
-                "invite_group_link": "link_value"
-            }
-        });
-
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_resolve_values() {
-        let input = json!({
-            "posting_config": {
-                "published_message_caption": "Text with {/posting_config/invite_group_link}",
-                "invite_group_link": "link_value"
-            }
-        });
-
-        let mut context = HashMap::new();
-        collect_absolute_paths(&input, "", &mut context);
-
-        let result = resolve_values(&input, &context);
-        let expected = json!({
-            "posting_config": {
-                "published_message_caption": "Text with link_value",
                 "invite_group_link": "link_value"
             }
         });
