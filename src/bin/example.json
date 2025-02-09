@@ -1,0 +1,10 @@
+{
+    "profile": {
+        "bio": "{/details/bio}",
+        "age": "{/details/age}"
+    },
+    "details": {
+        "bio": "Software Engineer",
+        "age": 30
+    }
+}

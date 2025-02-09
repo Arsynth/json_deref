@@ -3,14 +3,16 @@ use serde::Deserialize;
 use serde_json::json;
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 struct Response {
     profile: Profile,
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 struct Profile {
     bio: String,
-    age: u32,
+    age: String,
 }
 
 fn main() {
