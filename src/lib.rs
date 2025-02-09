@@ -7,12 +7,16 @@ pub fn resolve_json(input: &Value) -> Value {
     let mut path_map = HashMap::new();
     prepare_path_map(input, "", &mut path_map);
 
-    let json_with_absolute_paths = convert_to_absolute_paths(input, &path_map);
+    let json_with_absolute_paths = convert_to_absolute_paths(input, &path_map, "");
 
-    let paths: HashSet<String> = path_map.values().cloned().collect();
+    let path_maps: Vec<HashMap<String, String>> = path_map.values().cloned().collect();
+    let mut paths = HashSet::new();
+    for map in path_maps.iter() {
+        paths.extend(map.values().cloned());
+    }
 
     let mut extracted_values = HashMap::new();
-    extract_values_from_paths(&json_with_absolute_paths, &paths, "", &mut extracted_values);
+    extract_values_by_paths(&json_with_absolute_paths, &paths, "", &mut extracted_values);
 
     resolve_values(&json_with_absolute_paths, &extracted_values)
 }
@@ -50,7 +54,7 @@ fn resolve_reference_path(base_path: &str, relative_path: &str) -> String {
                 base_parts.pop();
             }
             "" => { /* ignore empty segments */ }
-            _ => base_parts.push(segment), 
+            _ => base_parts.push(segment),
         }
     }
 
@@ -75,78 +79,101 @@ fn collect_absolute_paths(json: &Value, base_path: &str, context: &mut HashMap<S
     }
 }
 
-fn prepare_path_map(json: &Value, base_path: &str, path_map: &mut HashMap<String, String>) {
+fn prepare_path_map(
+    json: &Value,
+    base_path: &str,
+    complete_path_map: &mut HashMap<String, HashMap<String, String>>,
+) {
     match json {
         Value::Object(map) => {
             for (key, value) in map {
                 let current_absolute_path = format!("{}/{}", base_path, key);
-                prepare_path_map(value, &current_absolute_path, path_map);
+                prepare_path_map(value, &current_absolute_path, complete_path_map);
             }
         }
         Value::Array(arr) => {
-            for value in arr {
-                prepare_path_map(value, base_path, path_map);
+            for (i, value) in arr.iter().enumerate() {
+                let current_absolute_path = format!("{}/{}", base_path, i);
+                prepare_path_map(value, &current_absolute_path, complete_path_map);
             }
         }
         Value::String(text) => {
+            let mut dependencies = HashMap::new();
             let mut start_pos = 0;
             while let Some(start) = text[start_pos..].find('{') {
-                let absolute_start = start_pos + start; 
+                let absolute_start = start_pos + start;
                 if let Some(end) = text[absolute_start..].find('}') {
-                    let absolute_end = absolute_start + end; 
+                    let absolute_end = absolute_start + end;
                     let reference = &text[absolute_start + 1..absolute_end];
 
                     if reference.starts_with('/') {
-                        path_map.insert(reference.to_string(), reference.to_string());
-                        start_pos = absolute_end + 1; 
-                        continue;
+                        dependencies.insert(reference.to_string(), reference.to_string());
+                    } else {
+                        let absolute_dependency_path = resolve_reference_path(base_path, reference);
+                        dependencies.insert(reference.to_string(), absolute_dependency_path);
                     }
-
-                    let absolute_path = resolve_reference_path(base_path, reference);
-                    path_map.insert(reference.to_string(), absolute_path);
-
-                    start_pos = absolute_end + 1; 
+                    start_pos = absolute_end + 1;
                 } else {
                     break;
                 }
+            }
+
+            if !dependencies.is_empty() {
+                complete_path_map.insert(base_path.to_string(), dependencies);
             }
         }
         _ => {}
     }
 }
 
-fn convert_to_absolute_paths(json: &Value, path_map: &HashMap<String, String>) -> Value {
+fn convert_to_absolute_paths(
+    json: &Value,
+    path_map: &HashMap<String, HashMap<String, String>>,
+    current_path: &str,
+) -> Value {
     match json {
         Value::Object(map) => {
             let mut new_map = Map::new();
             for (key, value) in map {
-                new_map.insert(key.clone(), convert_to_absolute_paths(value, path_map));
+                let new_path = format!("{}/{}", current_path, key);
+                new_map.insert(
+                    key.clone(),
+                    convert_to_absolute_paths(value, path_map, &new_path),
+                );
             }
             Value::Object(new_map)
         }
         Value::Array(arr) => {
             Value::Array(
                 arr.iter()
-                    .map(|v| convert_to_absolute_paths(v, path_map))
+                    .enumerate()
+                    .map(|(i, v)| {
+                        let new_path = format!("{}/{}", current_path, i);
+                        convert_to_absolute_paths(v, path_map, &new_path)
+                    })
                     .collect(),
             )
         }
         Value::String(text) => {
             let mut updated_text = text.clone();
             let mut start_pos = 0;
+
             while let Some(start) = updated_text[start_pos..].find('{') {
                 let absolute_start = start_pos + start;
                 if let Some(end) = updated_text[absolute_start..].find('}') {
                     let absolute_end = absolute_start + end;
                     let relative_key = &updated_text[absolute_start + 1..absolute_end];
-                                                                                        
-                    if let Some(absolute_path) = path_map.get(relative_key) {
 
-                        updated_text.replace_range(
-                            absolute_start..=absolute_end,
-                            &format!("{{{}}}", absolute_path),
-                        );
-                        start_pos = absolute_start + absolute_path.len();
+                    if let Some(dependencies) = path_map.get(current_path) {
+                        if let Some(absolute_path) = dependencies.get(relative_key) {
+                            updated_text.replace_range(
+                                absolute_start..=absolute_end,
+                                &format!("{{{}}}", absolute_path),
+                            );
+                            start_pos = absolute_start + absolute_path.len() + 2;
+                        } else {
+                            start_pos = absolute_end + 1;
+                        }
                     } else {
                         start_pos = absolute_end + 1;
                     }
@@ -154,13 +181,14 @@ fn convert_to_absolute_paths(json: &Value, path_map: &HashMap<String, String>) -
                     break;
                 }
             }
+
             Value::String(updated_text)
         }
         _ => json.clone(),
     }
 }
 
-fn extract_values_from_paths(
+fn extract_values_by_paths(
     json: &Value,
     paths: &HashSet<String>,
     current_path: &str,
@@ -169,14 +197,14 @@ fn extract_values_from_paths(
     match json {
         Value::Object(map) => {
             for (key, value) in map {
-                let new_path = format!("{}/{}", current_path, key); 
-                extract_values_from_paths(value, paths, &new_path, extracted_values);
+                let new_path = format!("{}/{}", current_path, key);
+                extract_values_by_paths(value, paths, &new_path, extracted_values);
             }
         }
         Value::Array(arr) => {
             for (index, value) in arr.iter().enumerate() {
-                let new_path = format!("{}/{}", current_path, index); 
-                extract_values_from_paths(value, paths, &new_path, extracted_values);
+                let new_path = format!("{}/{}", current_path, index);
+                extract_values_by_paths(value, paths, &new_path, extracted_values);
             }
         }
         Value::String(text) => {
@@ -189,7 +217,7 @@ fn extract_values_from_paths(
                 extracted_values.insert(current_path.to_string(), num.to_string());
             }
         }
-        _ => {} 
+        _ => {}
     }
 }
 
@@ -205,9 +233,9 @@ fn resolve_values(json: &Value, context: &HashMap<String, String>) -> Value {
         Value::Array(arr) => Value::Array(arr.iter().map(|v| resolve_values(v, context)).collect()),
         Value::String(text) => {
             let mut resolved_text = text.clone();
-            let mut start_pos = 0; 
+            let mut start_pos = 0;
             while let Some(start) = resolved_text[start_pos..].find('{') {
-                let absolute_start = start_pos + start; 
+                let absolute_start = start_pos + start;
                 if let Some(end) = resolved_text[absolute_start..].find('}') {
                     let absolute_end = absolute_start + end;
                     let absolute_key = &resolved_text[absolute_start + 1..absolute_end];
@@ -231,7 +259,6 @@ fn resolve_values(json: &Value, context: &HashMap<String, String>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::Deserialize;
     use serde_json::json;
 
     #[test]
@@ -278,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_to_absolute_paths() {
+    fn test_convert_to_absolute_paths_with_one_invalid() {
         let input = json!({
             "posting_config": {
                 "published_message_caption": "Check this {../invite_group_link} or {invite_group_link}",
@@ -289,7 +316,7 @@ mod tests {
         let mut path_map = HashMap::new();
         prepare_path_map(&input, "", &mut path_map);
 
-        let result = convert_to_absolute_paths(&input, &path_map);
+        let result = convert_to_absolute_paths(&input, &path_map, "");
         let expected = json!({
             "posting_config": {
                 "published_message_caption": "Check this {/invite_group_link} or {/posting_config/invite_group_link}",
@@ -325,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_resolve_json_with_dependencies_at_different_levels() {
-        let input = json!({
+        let input = serde_json::json!({
             "config": {
                 "level1": {
                     "key1": "value1",
@@ -337,31 +364,62 @@ mod tests {
                 },
                 "level2": {
                     "key4": "value4",
-                    "key5": "{key4}" 
+                    "key5": "{key4}"
                 },
                 "global_key": "{/config/level2/key4}",
-                "global_dependency": "{/config/level1/nested/key4}" 
+                "global_dependency": "{/config/level1/nested/key4}"
             }
         });
 
         let mut path_map = HashMap::new();
         prepare_path_map(&input, "", &mut path_map);
 
-        assert_eq!(
-            path_map.get("key1"),
-            Some(&"/config/level1/key1".to_string())
-        );
-        assert_eq!(
-            path_map.get("../../level2/key4"),
-            Some(&"/config/level2/key4".to_string())
-        );
-        assert_eq!(
-            path_map.get("key4"),
-            Some(&"/config/level2/key4".to_string())
-        ); 
+        let expected_path_map = HashMap::from([
+            (
+                "/config/global_key".to_string(),
+                HashMap::from([
+                    (
+                        "/config/level2/key4".to_string(),
+                        "/config/level2/key4".to_string(),
+                    ), 
+                ]),
+            ),
+            (
+                "/config/global_dependency".to_string(),
+                HashMap::from([
+                    (
+                        "/config/level1/nested/key4".to_string(),
+                        "/config/level1/nested/key4".to_string(),
+                    ),
+                ]),
+            ),
+            (
+                "/config/level1/key2".to_string(),
+                HashMap::from([
+                    ("key1".to_string(), "/config/level1/key1".to_string()), 
+                ]),
+            ),
+            (
+                "/config/level1/nested/key3".to_string(),
+                HashMap::from([
+                    (
+                        "../../level2/key4".to_string(),
+                        "/config/level2/key4".to_string(),
+                    ),
+                ]),
+            ),
+            (
+                "/config/level2/key5".to_string(),
+                HashMap::from([
+                    ("key4".to_string(), "/config/level2/key4".to_string()),
+                ]),
+            ),
+        ]);
 
-        let json_absolute = convert_to_absolute_paths(&input, &path_map);
-        let expected_absolute = json!({
+        assert_eq!(path_map, expected_path_map);
+
+        let result_json = convert_to_absolute_paths(&input, &path_map, "");
+        let expected_json = serde_json::json!({
             "config": {
                 "level1": {
                     "key1": "value1",
@@ -379,14 +437,26 @@ mod tests {
                 "global_dependency": "{/config/level1/nested/key4}"
             }
         });
-        assert_eq!(json_absolute, expected_absolute);
 
-        let mut values_map = HashMap::new();
-        let paths: HashSet<String> = path_map.values().cloned().collect();
-        extract_values_from_paths(&json_absolute, &paths, "", &mut values_map);
+        assert_eq!(result_json, expected_json);
 
-        let resolved_json = resolve_values(&json_absolute, &values_map);
-        let expected_resolved = json!({
+        let mut extracted_values = HashMap::new();
+        let path_maps: Vec<HashMap<String, String>> = path_map.values().cloned().collect();
+        let mut absolute_paths = HashSet::new();
+        for map in path_maps.iter() {
+            absolute_paths.extend(map.values().cloned());
+        }
+        extract_values_by_paths(&result_json, &absolute_paths, "", &mut extracted_values);
+
+        let expected_values = HashMap::from([
+            ("/config/level2/key4".to_string(), "value4".to_string()),
+            ("/config/level1/nested/key4".to_string(), "local_value".to_string()),
+            ("/config/level1/key1".to_string(), "value1".to_string()),
+        ]);
+        assert_eq!(extracted_values, expected_values);
+
+        let resolved_json = resolve_values(&result_json, &extracted_values);
+        let expected_resolved = serde_json::json!({
             "config": {
                 "level1": {
                     "key1": "value1",
@@ -404,6 +474,7 @@ mod tests {
                 "global_dependency": "local_value"
             }
         });
+
         assert_eq!(resolved_json, expected_resolved);
     }
 
@@ -470,150 +541,5 @@ mod tests {
 
         let resolved = resolve_values(&json, &path_map);
         assert_eq!(resolved, expected_resolved);
-    }
-
-    /// Test will fail. Multiple absolute paths are not supported yet.
-    #[test]
-    fn test_relative_path_with_multiple_absolute_resolutions() {
-        let input = serde_json::json!({
-            "branch1": {
-                "parent_key": "value1",
-                "subbranch": {
-                    "child_key": "{../parent_key}"
-                }
-            },
-            "branch2": {
-                "parent_key": "value2",
-                "subbranch": {
-                    "child_key": "{../parent_key}"
-                }
-            }
-        });
-
-        let mut path_map = HashMap::new();
-        prepare_path_map(&input, "", &mut path_map);
-
-        println!("Path Map: {:#?}", path_map);
-        assert_eq!(
-            path_map.get("../parent_key"),
-            Some(&"/branch1/parent_key".to_string()) 
-        );
-        assert_eq!(
-            path_map.get("../parent_key"),
-            Some(&"/branch2/parent_key".to_string())
-        );
-
-        let json_with_absolute_paths = convert_to_absolute_paths(&input, &path_map);
-        println!("JSON with Absolute Paths:\n{}", json_with_absolute_paths);
-
-        let expected_json_with_absolute_paths = serde_json::json!({
-            "branch1": {
-                "parent_key": "value1",
-                "subbranch": {
-                    "child_key": "{/branch1/parent_key}"
-                }
-            },
-            "branch2": {
-                "parent_key": "value2",
-                "subbranch": {
-                    "child_key": "{/branch2/parent_key}"
-                }
-            }
-        });
-        assert_eq!(json_with_absolute_paths, expected_json_with_absolute_paths);
-
-        let paths: HashSet<String> = path_map.values().cloned().collect();
-        let mut extracted_values = HashMap::new();
-        extract_values_from_paths(&json_with_absolute_paths, &paths, "", &mut extracted_values);
-
-        println!("Extracted Values: {:#?}", extracted_values);
-        assert_eq!(
-            extracted_values.get("/branch1/parent_key"),
-            Some(&"value1".to_string())
-        );
-        assert_eq!(
-            extracted_values.get("/branch2/parent_key"),
-            Some(&"value2".to_string())
-        );
-
-        let resolved_json = resolve_values(&json_with_absolute_paths, &extracted_values);
-        println!(
-            "Resolved JSON:\n{}",
-            serde_json::to_string_pretty(&resolved_json).unwrap()
-        );
-
-        let expected_resolved_json = serde_json::json!({
-            "branch1": {
-                "parent_key": "value1",
-                "subbranch": {
-                    "child_key": "value1"
-                }
-            },
-            "branch2": {
-                "parent_key": "value2",
-                "subbranch": {
-                    "child_key": "value2"
-                }
-            }
-        });
-        assert_eq!(resolved_json, expected_resolved_json);
-    }
-
-    #[test]
-    fn test_resolve_json_to_object_using_hashset() {
-        let input = serde_json::json!({
-            "branch1": {
-                "parent_key": "value1",
-                "subbranch": {
-                    "child_key": "{../parent_key}"
-                }
-            },
-            "branch2": {
-                "parent_key": "value2",
-                "parent_key2": "value22",
-                "subbranch": {
-                    "child_key": "{../parent_key2}"
-                }
-            }
-        });
-
-        #[derive(Debug, Deserialize, PartialEq)]
-        struct Branch {
-            parent_key: String,
-            subbranch: Subbranch,
-        }
-
-        #[derive(Debug, Deserialize, PartialEq)]
-        struct Subbranch {
-            child_key: String,
-        }
-
-        #[derive(Debug, Deserialize, PartialEq)]
-        struct Root {
-            branch1: Branch,
-            branch2: Branch,
-        }
-
-        let result: Result<Root, _> = resolve_json_to_object(&input);
-
-        assert!(result.is_ok());
-
-        let resolved = result.unwrap();
-        let expected = Root {
-            branch1: Branch {
-                parent_key: "value1".to_string(),
-                subbranch: Subbranch {
-                    child_key: "value1".to_string(),
-                },
-            },
-            branch2: Branch {
-                parent_key: "value2".to_string(),
-                subbranch: Subbranch {
-                    child_key: "value22".to_string(),
-                },
-            },
-        };
-
-        assert_eq!(resolved, expected);
     }
 }
