@@ -1,7 +1,16 @@
 [package]
 name = "json_deref"
 version = "0.1.0"
+authors = ["Arsynth"]
 edition = "2024"
+description = "JSON internal field links resolver"
+license = "Apache-2.0"
+repository = "https://github.com/Arsynth/json_deref.git"
+homepage = "https://github.com/Arsynth/json_deref"
+documentation = "https://docs.rs/json_deref"
+keywords = ["json", "resolver", "links", "evaluate"]
+categories = ["data-structures", "parsing"]
+readme = "README.md"
 
 [dependencies]
 serde = { version = "1.0.217", features = ["derive"] }
