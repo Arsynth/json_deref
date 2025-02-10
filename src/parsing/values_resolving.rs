@@ -16,7 +16,7 @@ pub(crate) fn resolve_values(json: &Value, context: &HashMap<AbsolutePath, Strin
             let mut resolved_text = text.clone();
             let mut start_pos = 0;
 
-            // Цикл по всем упоминаниям {path} в тексте
+            // Loop through all mentions of {path} in the text
             while let Some(start) = resolved_text[start_pos..].find('{') {
                 let absolute_start = start_pos + start;
                 if let Some(end) = resolved_text[absolute_start..].find('}') {
@@ -26,15 +26,15 @@ pub(crate) fn resolve_values(json: &Value, context: &HashMap<AbsolutePath, Strin
                     let absolute_path = AbsolutePath::new(key_in_braces);
 
                     if let Some(value) = context.get(&absolute_path) {
-                        // Замена {path} на соответствующее разрешённое значение
+                        // Replace {path} with the corresponding resolved value
                         resolved_text.replace_range(absolute_start..=absolute_end, value);
                         start_pos = absolute_start + value.len();
                     } else {
-                        // Если путь не найден в контексте, продолжаем
+                        // If the path is not found in the context, continue
                         start_pos = absolute_end + 1;
                     }
                 } else {
-                    break; // Если закрывающая скобка отсутствует, выходим
+                    break; // If the closing brace is missing, exit
                 }
             }
             Value::String(resolved_text)
@@ -67,7 +67,7 @@ mod tests {
             }
         });
 
-        // Контекст с разрешёнными значениями
+        // Context with resolved values
         let context = HashMap::from([
             (
                 AbsolutePath::new("/config/level1/key1"),
@@ -104,16 +104,16 @@ mod tests {
         let json = json!({
             "config": {
                 "key1": "value1",
-                "key2": "{/config/key3}" // Путь отсутствует в контексте
+                "key2": "{/config/key3}" // Path is missing in the context
             }
         });
 
-        // Контекст без /config/key3
+        // Context without /config/key3
         let context = HashMap::from([(AbsolutePath::new("/config/key1"), "value1".to_string())]);
 
         let resolved_json = resolve_values(&json, &context);
 
-        // Ожидаемое поведение: отсутствующий путь остаётся нетронутым
+        // Expected behavior: the missing path remains untouched
         let expected_resolved = json!({
             "config": {
                 "key1": "value1",
@@ -134,7 +134,7 @@ mod tests {
             }
         });
 
-        // Контекст с разрешёнными значениями
+        // Context with resolved values
         let context = HashMap::from([
             (
                 AbsolutePath::new("/posting_config/invite_group_link"),
@@ -175,7 +175,7 @@ mod tests {
             }
         });
 
-        // Контекст с разрешёнными значениями
+        // Context with resolved values
         let context = HashMap::from([
             (
                 AbsolutePath::new("/config/level1/key1"),

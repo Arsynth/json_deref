@@ -134,18 +134,18 @@ pub(crate) fn extract_values_by_paths(
             }
         }
         Value::String(text) => {
-            // Если текущий путь содержится в наборах путей, добавляем строковое значение
+            // If the current path is in the set of paths, add the string value
             if paths.contains(current_path) {
                 extracted_values.insert(current_path.clone(), text.clone());
             }
         }
         Value::Number(num) => {
-            // Если текущий путь содержится в наборах путей, добавляем числовое значение как строку
+            // If the current path is in the set of paths, add the numeric value as a string
             if paths.contains(current_path) {
                 extracted_values.insert(current_path.clone(), num.to_string());
             }
         }
-        _ => {} // Игнорируем другие типы (Bool, Null и т.д.)
+        _ => {} // Ignore other types (Bool, Null, etc.)
     }
 }
 
@@ -203,7 +203,7 @@ mod tests {
         let mut path_map = HashMap::new();
         make_deps_path_map(&input, &AbsolutePath::new("/"), &mut path_map);
 
-        // Обновленный expected_path_map с использованием AbsolutePath и RelativePath
+        // Updated expected_path_map using AbsolutePath and RelativePath
         let expected_path_map = HashMap::from([
             (
                 AbsolutePath::new("/config/global_key"),
@@ -266,7 +266,7 @@ mod tests {
 
         assert_eq!(result_json, expected_json);
 
-        // Проверка извлечения значений
+        // Check value extraction
         let mut extracted_values = HashMap::new();
         let absolute_paths: HashSet<AbsolutePath> = path_map
             .values()
@@ -295,7 +295,7 @@ mod tests {
         ]);
         assert_eq!(extracted_values, expected_values);
 
-        // Проверка разрешения значений
+        // Check value resolution
         let resolved_json = resolve_values(&result_json, &expected_values);
         let expected_resolved = serde_json::json!({
             "config": {
