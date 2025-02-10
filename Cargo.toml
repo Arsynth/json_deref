@@ -1,6 +1,6 @@
 [package]
 name = "json_deref"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Arsynth"]
 edition = "2024"
 description = "JSON internal field links resolver"
@@ -8,7 +8,7 @@ license = "Apache-2.0"
 repository = "https://github.com/Arsynth/json_deref.git"
 homepage = "https://github.com/Arsynth/json_deref"
 documentation = "https://docs.rs/json_deref"
-keywords = ["json", "resolver", "links", "evaluate"]
+keywords = ["json", "resolver", "links", "evaluate", "references", "dependencies"]
 categories = ["data-structures", "parsing"]
 readme = "README.md"
 
