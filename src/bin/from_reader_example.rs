@@ -16,7 +16,19 @@ struct Profile {
 }
 
 fn main() {
-    let file = File::open("src/bin/example.json").unwrap();
+    let file = r#"
+    {
+        "profile": {
+            "bio": "{/details/bio}",
+            "age": "{/details/age}"
+        },
+        "details": {
+            "bio": "Software Engineer",
+            "age": 30
+        }
+    }
+    "#.as_bytes();
+
     let response: Response = resolve_json_reader_to_object(file).unwrap();
 
     println!("{:?}", response);

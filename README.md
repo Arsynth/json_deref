@@ -256,6 +256,7 @@ Resolved Output:
 ```
 
 ## How It Works
+
 json_deref uses the following steps to resolve a JSON structure:
 
 ### Path Mapping
