@@ -36,7 +36,8 @@ pub(crate) fn make_deps_path_map(
                     if reference.starts_with('/') {
                         dependencies.insert(relative_path, AbsolutePath::new(reference));
                     } else {
-                        let absolute_dependency_path = base_path.resolve_with(&RelativePath::new(reference));
+                        let absolute_dependency_path =
+                            base_path.resolve_with(&RelativePath::new(reference));
                         dependencies.insert(relative_path, absolute_dependency_path);
                     }
                     start_pos = absolute_end + 1;
@@ -118,10 +119,16 @@ pub(crate) fn extract_values_by_paths(
     json: &Value,
     paths: &HashSet<AbsolutePath>,
     current_path: &AbsolutePath,
-    extracted_values: &mut HashMap<AbsolutePath, String>,
+    extracted_values: &mut HashMap<AbsolutePath, Value>,
 ) {
     match json {
         Value::Object(map) => {
+            // If the entire object itself is in the paths to extract, add it
+            if paths.contains(current_path) {
+                extracted_values.insert(current_path.clone(), json.clone());
+            }
+            
+            // Recurse into the map to explore nested paths
             for (key, value) in map {
                 let new_path = current_path.append(key);
                 extract_values_by_paths(value, paths, &new_path, extracted_values);
@@ -129,23 +136,22 @@ pub(crate) fn extract_values_by_paths(
         }
         Value::Array(arr) => {
             for (index, value) in arr.iter().enumerate() {
+                // Create a new path for the array index
                 let new_path = current_path.append(&index.to_string());
+                // Recurse into the array
                 extract_values_by_paths(value, paths, &new_path, extracted_values);
             }
-        }
-        Value::String(text) => {
-            // If the current path is in the set of paths, add the string value
+            // Check if the entire array itself is part of the `paths` to extract
             if paths.contains(current_path) {
-                extracted_values.insert(current_path.clone(), text.clone());
+                extracted_values.insert(current_path.clone(), json.clone());
             }
         }
-        Value::Number(num) => {
-            // If the current path is in the set of paths, add the numeric value as a string
+        _ => {
+            // If the current path is in the set of paths to extract, add it to the map
             if paths.contains(current_path) {
-                extracted_values.insert(current_path.clone(), num.to_string());
+                extracted_values.insert(current_path.clone(), json.clone());
             }
         }
-        _ => {} // Ignore other types (Bool, Null, etc.)
     }
 }
 
@@ -184,26 +190,29 @@ mod tests {
         let input = serde_json::json!({
             "config": {
                 "level1": {
-                    "key1": "value1",
-                    "key2": "{key1}",
+                    "key1": "value1",  // String value
+                    "key2": "{/config/level1/key1}", // Reference to another field's string
+                    "key3": "{/config/level2/key4}", // Reference to a number
                     "nested": {
-                        "key3": "{../../level2/key4}",
-                        "key4": "local_value"
+                        "key4": "{../../level2/key5}", // Relative reference to an array
+                        "key5": "local_value" // Local string value
                     }
                 },
                 "level2": {
-                    "key4": "value4",
-                    "key5": "{key4}"
+                    "key4": 42, // Number value
+                    "key5": [1, 2, 3], // Array value
+                    "key6": "{/config/level1/nested/key5}" // Reference to a string in level1
                 },
-                "global_key": "{/config/level2/key4}",
-                "global_dependency": "{/config/level1/nested/key4}"
+                "global_key": "{/config/level2/key4}", // Global reference to a number
+                "global_dependency": "{/config/level1/nested/key5}" // Global reference to a string
             }
         });
 
+        // Build dependencies map
         let mut path_map = HashMap::new();
         make_deps_path_map(&input, &AbsolutePath::new("/"), &mut path_map);
 
-        // Updated expected_path_map using AbsolutePath and RelativePath
+        // Expected path_map after resolving references
         let expected_path_map = HashMap::from([
             (
                 AbsolutePath::new("/config/global_key"),
@@ -215,58 +224,60 @@ mod tests {
             (
                 AbsolutePath::new("/config/global_dependency"),
                 HashMap::from([(
-                    RelativePath::new("/config/level1/nested/key4"),
-                    AbsolutePath::new("/config/level1/nested/key4"),
+                    RelativePath::new("/config/level1/nested/key5"),
+                    AbsolutePath::new("/config/level1/nested/key5"),
                 )]),
             ),
             (
                 AbsolutePath::new("/config/level1/key2"),
                 HashMap::from([(
-                    RelativePath::new("key1"),
+                    RelativePath::new("/config/level1/key1"),
                     AbsolutePath::new("/config/level1/key1"),
                 )]),
             ),
             (
-                AbsolutePath::new("/config/level1/nested/key3"),
+                AbsolutePath::new("/config/level1/nested/key4"),
                 HashMap::from([(
-                    RelativePath::new("../../level2/key4"),
-                    AbsolutePath::new("/config/level2/key4"),
+                    RelativePath::new("../../level2/key5"),
+                    AbsolutePath::new("/config/level2/key5"),
                 )]),
             ),
             (
-                AbsolutePath::new("/config/level2/key5"),
+                AbsolutePath::new("/config/level2/key6"),
                 HashMap::from([(
-                    RelativePath::new("key4"),
-                    AbsolutePath::new("/config/level2/key4"),
+                    RelativePath::new("/config/level1/nested/key5"),
+                    AbsolutePath::new("/config/level1/nested/key5"),
                 )]),
             ),
         ]);
 
         assert_eq!(path_map, expected_path_map);
 
+        // Resolve expanded JSON paths
         let result_json = expand_absolute_paths(&input, &path_map, &AbsolutePath::new("/"));
         let expected_json = serde_json::json!({
             "config": {
                 "level1": {
                     "key1": "value1",
                     "key2": "{/config/level1/key1}",
+                    "key3": "{/config/level2/key4}",
                     "nested": {
-                        "key3": "{/config/level2/key4}",
-                        "key4": "local_value"
+                        "key4": "{/config/level2/key5}",
+                        "key5": "local_value"
                     }
                 },
                 "level2": {
-                    "key4": "value4",
-                    "key5": "{/config/level2/key4}"
+                    "key4": 42,
+                    "key5": "{/config/level2/key5}",
+                    "key6": "{/config/level1/nested/key5}"
                 },
                 "global_key": "{/config/level2/key4}",
-                "global_dependency": "{/config/level1/nested/key4}"
+                "global_dependency": "{/config/level1/nested/key5}"
             }
         });
-
         assert_eq!(result_json, expected_json);
 
-        // Check value extraction
+        // Extract dependency values from JSON
         let mut extracted_values = HashMap::new();
         let absolute_paths: HashSet<AbsolutePath> = path_map
             .values()
@@ -279,39 +290,49 @@ mod tests {
             &mut extracted_values,
         );
 
-        let expected_values = HashMap::from([
+        let expected_extracted_values = HashMap::from([
             (
                 AbsolutePath::new("/config/level2/key4"),
-                "value4".to_string(),
+                Value::Number(42.into()),
             ),
             (
-                AbsolutePath::new("/config/level1/nested/key4"),
-                "local_value".to_string(),
+                AbsolutePath::new("/config/level2/key5"),
+                Value::Array(vec![
+                    Value::Number(1.into()),
+                    Value::Number(2.into()),
+                    Value::Number(3.into()),
+                ]),
+            ),
+            (
+                AbsolutePath::new("/config/level1/nested/key5"),
+                Value::String("local_value".to_string()),
             ),
             (
                 AbsolutePath::new("/config/level1/key1"),
-                "value1".to_string(),
+                Value::String("value1".to_string()),
             ),
         ]);
-        assert_eq!(extracted_values, expected_values);
+        assert_eq!(extracted_values, expected_extracted_values);
 
-        // Check value resolution
-        let resolved_json = resolve_values(&result_json, &expected_values);
+        // Resolve final values in the JSON
+        let resolved_json = resolve_values(&result_json, &extracted_values);
         let expected_resolved = serde_json::json!({
             "config": {
                 "level1": {
                     "key1": "value1",
                     "key2": "value1",
+                    "key3": 42,
                     "nested": {
-                        "key3": "value4",
-                        "key4": "local_value"
+                        "key4": [1, 2, 3],
+                        "key5": "local_value"
                     }
                 },
                 "level2": {
-                    "key4": "value4",
-                    "key5": "value4"
+                    "key4": 42,
+                    "key5": [1, 2, 3],
+                    "key6": "local_value"
                 },
-                "global_key": "value4",
+                "global_key": 42,
                 "global_dependency": "local_value"
             }
         });
@@ -321,45 +342,71 @@ mod tests {
 
     #[test]
     fn test_extract_values_by_paths() {
-        let input = json!({
+        let input = serde_json::json!({
             "config": {
                 "level1": {
-                    "key1": "value1",
-                    "key2": 42,
-                    "key3": "not_extracted"
+                    "key1": "value1", // String
+                    "key2": 42,       // Number
+                    "key3": [1, 2, 3], // Array
                 },
                 "level2": {
-                    "key4": "value4"
+                    "key4": { "nested_key": "nested_value" }, // Object
+                    "key5": true, // Boolean
+                    "key6": null  // Null
                 }
             }
         });
 
+        // Define the paths for which values should be extracted
         let paths_to_extract = HashSet::from([
-            AbsolutePath::new("/config/level1/key1"),
-            AbsolutePath::new("/config/level1/key2"),
-            AbsolutePath::new("/config/level2/key4"),
+            AbsolutePath::new("/config/level1/key1"), // String
+            AbsolutePath::new("/config/level1/key2"), // Number
+            AbsolutePath::new("/config/level1/key3"), // Array
+            AbsolutePath::new("/config/level2/key4"), // Object
+            AbsolutePath::new("/config/level2/key5"), // Boolean
+            AbsolutePath::new("/config/level2/key6"), // Null
         ]);
 
         let mut extracted_values = HashMap::new();
+
+        // Perform extraction
         extract_values_by_paths(
             &input,
             &paths_to_extract,
-            &AbsolutePath::new("/"),
+            &AbsolutePath::new("/"), // Start from the root
             &mut extracted_values,
         );
 
-        let expected_values = HashMap::from([
+        // Define expected extracted values (with original types)
+        let expected_extracted_values = HashMap::from([
             (
                 AbsolutePath::new("/config/level1/key1"),
-                "value1".to_string(),
+                Value::String("value1".to_string()),
+            ), // String
+            (
+                AbsolutePath::new("/config/level1/key2"),
+                Value::Number(42.into()),
+            ), // Number
+            (
+                AbsolutePath::new("/config/level1/key3"),
+                Value::Array(vec![
+                    Value::Number(1.into()),
+                    Value::Number(2.into()),
+                    Value::Number(3.into()),
+                ]), // Array
             ),
-            (AbsolutePath::new("/config/level1/key2"), "42".to_string()),
             (
                 AbsolutePath::new("/config/level2/key4"),
-                "value4".to_string(),
+                Value::Object(serde_json::Map::from_iter(vec![(
+                    "nested_key".to_string(),
+                    Value::String("nested_value".to_string()),
+                )])), // Object
             ),
+            (AbsolutePath::new("/config/level2/key5"), Value::Bool(true)), // Boolean
+            (AbsolutePath::new("/config/level2/key6"), Value::Null),       // Null
         ]);
 
-        assert_eq!(extracted_values, expected_values);
+        // Assert that the extracted values match the expected values
+        assert_eq!(extracted_values, expected_extracted_values);
     }
 }

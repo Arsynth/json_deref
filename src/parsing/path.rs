@@ -5,27 +5,27 @@ pub struct AbsolutePath(String);
 pub struct RelativePath(String);
 
 impl AbsolutePath {
-    /// Создание нового абсолютного пути из строки
+    /// Create a new absolute path from a string
     pub fn new(path: &str) -> Self {
         let normalized_path = Self::normalize(path);
         AbsolutePath(normalized_path)
     }
 
-    /// Нормализация абсолютного пути (удаление лишних слэшей)
+    /// Normalize the absolute path (remove extra slashes)
     fn normalize(path: &str) -> String {
         format!("/{}", path.trim_start_matches('/').trim_end_matches('/'))
     }
 
-    /// Получение внутренней строки
+    /// Get the internal string
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    /// Объединение текущего абсолютного пути с относительным
+    /// Combine the current absolute path with a relative one
     pub fn resolve_with(&self, relative_path: &RelativePath) -> AbsolutePath {
         let mut base_parts: Vec<&str> = self.0.split('/').filter(|part| !part.is_empty()).collect();
 
-        // Убираем текущий компонент файла (если это не корень)
+        // Remove the current file component (if it's not the root)
         base_parts.pop();
 
         for segment in relative_path.0.split('/') {
@@ -33,7 +33,7 @@ impl AbsolutePath {
                 ".." => {
                     base_parts.pop();
                 }
-                "" => { /* Пропускаем пустые сегменты */ }
+                "" => { /* Skip empty segments */ }
                 _ => base_parts.push(segment),
             }
         }
@@ -58,12 +58,12 @@ impl Default for AbsolutePath {
 }
 
 impl RelativePath {
-    /// Создание нового относительного пути из строки
+    /// Create a new relative path from a string
     pub fn new(path: &str) -> Self {
         RelativePath(path.to_string())
     }
 
-    /// Получение внутренней строки
+    /// Get the internal string
     pub fn as_str(&self) -> &str {
         &self.0
     }
