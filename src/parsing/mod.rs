@@ -156,6 +156,32 @@ pub(crate) fn extract_values_by_paths(
     }
 }
 
+pub(crate) fn collect_all_absolute_paths(
+    json: &Value,
+    current_path: &AbsolutePath,
+    source_map: &mut HashMap<AbsolutePath, Value>,
+) {
+    match json {
+        Value::Object(map) => {
+            for (key, value) in map {
+                let new_path = current_path.append(key);
+                source_map.insert(new_path.clone(), value.clone());
+                collect_all_absolute_paths(value, &new_path, source_map);
+            }
+        }
+        Value::Array(array) => {
+            for (index, value) in array.iter().enumerate() {
+                let new_path = current_path.append(&index.to_string());
+                source_map.insert(new_path.clone(), value.clone());
+                collect_all_absolute_paths(value, &new_path, source_map);
+            }
+        }
+        _ => {
+            source_map.insert(current_path.clone(), json.clone());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::parsing::values_resolving::resolve_values;

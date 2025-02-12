@@ -42,7 +42,7 @@ fn extract_dependency(text: &str) -> Option<AbsolutePath> {
 
 /// Resolves embedded references in a string, such as "Hello {path}".
 /// This keeps the input as a string and replaces any "{dependency_path}" references within it.
-fn resolve_embedded_refs(text: &str, context: &HashMap<AbsolutePath, Value>) -> Value {
+fn resolve_embedded_refs(text: &str, source_map: &HashMap<AbsolutePath, Value>) -> Value {
     let mut resolved_text = text.to_string();
     let mut start_pos = 0;
 
@@ -50,29 +50,66 @@ fn resolve_embedded_refs(text: &str, context: &HashMap<AbsolutePath, Value>) -> 
         let absolute_start = start_pos + start;
         if let Some(end) = resolved_text[absolute_start..].find('}') {
             let absolute_end = absolute_start + end;
-            let path_in_braces = &resolved_text[absolute_start + 1..absolute_end];
+            let reference = &resolved_text[absolute_start + 1..absolute_end];
 
-            let absolute_path = AbsolutePath::new(path_in_braces);
-
-            if let Some(resolved_value) = context.get(&absolute_path) {
-                // Only replace embedded references if the resolved value is a string
-                if let Value::String(resolved_string) = resolved_value {
-                    resolved_text.replace_range(absolute_start..=absolute_end, resolved_string);
-                    start_pos = absolute_start + resolved_string.len();
-                } else {
-                    // If the resolved value is not a string, return as untouched
-                    return Value::String(text.to_string());
+            // Check if it's an absolute path
+            if reference.starts_with('/') {
+                let absolute_path = AbsolutePath::new(reference);
+                if let Some(resolved_value) = source_map.get(&absolute_path) {
+                    if let Value::String(resolved_string) = resolved_value {
+                        // Replace the dependency with the resolved string slice
+                        resolved_text
+                            .replace_range(absolute_start..=absolute_end, resolved_string.as_str());
+                        start_pos = absolute_start + resolved_string.len();
+                        continue;
+                    }
                 }
-            } else {
-                // If no matching path is found, skip and move forward
-                start_pos = absolute_end + 1;
             }
+            start_pos = absolute_end + 1;
         } else {
-            break;
+            break; // No closing brace found
         }
     }
 
     Value::String(resolved_text)
+}
+
+// Recursive function for resolving the template
+pub(crate) fn resolve_recursive(
+    template: &Value,
+    source_map: &HashMap<AbsolutePath, Value>,
+) -> Value {
+    match template {
+        Value::Object(template_map) => {
+            // Traverse the template map
+            let mut resolved_map = serde_json::Map::new();
+            for (key, value) in template_map {
+                resolved_map.insert(key.clone(), resolve_recursive(value, source_map));
+            }
+            Value::Object(resolved_map)
+        }
+        Value::Array(template_array) => {
+            // Traverse the template array
+            Value::Array(
+                template_array
+                    .iter()
+                    .map(|value| resolve_recursive(value, source_map))
+                    .collect(),
+            )
+        }
+        Value::String(text) => {
+            // Handle standalone dependency (e.g., "{/absolute/path}")
+            if let Some(absolute_path) = extract_dependency(text) {
+                if let Some(resolved_value) = source_map.get(&absolute_path) {
+                    return resolved_value.clone(); // Fully resolve the standalone dependency
+                }
+            }
+
+            // Handle embedded dependencies
+            resolve_embedded_refs(text, source_map)
+        }
+        _ => template.clone(), // Return all other values unchanged
+    }
 }
 
 #[cfg(test)]
@@ -81,6 +118,69 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn test_resolve_embedded_refs() {
+        // Sample source_map
+        let source_map: HashMap<AbsolutePath, Value> = HashMap::from([
+            (
+                AbsolutePath::new("/data/key1"),
+                Value::String("Value 1".to_string()),
+            ),
+            (
+                AbsolutePath::new("/data/key2"),
+                Value::String("Value 2".to_string()),
+            ),
+            (
+                AbsolutePath::new("/nested/object"),
+                Value::String("Nested Value".to_string()),
+            ),
+        ]);
+
+        // Input containing embedded dependencies
+        let input = "This is {/data/key1}, and here is {/data/key2}. Lastly: {/nested/object}";
+
+        // Resolve the embedded dependencies
+        let result = resolve_embedded_refs(input, &source_map);
+
+        // Expected resolved output
+        let expected =
+            Value::String("This is Value 1, and here is Value 2. Lastly: Nested Value".to_string());
+
+        // Validate the result matches the expected output
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_resolve_embedded_refs_with_invalid_paths() {
+        use serde_json::json;
+
+        // Sample source_map with correct absolute paths
+        let source_map: HashMap<AbsolutePath, Value> = HashMap::from([
+            (
+                AbsolutePath::new("/data/key1"),
+                Value::String("Resolved Key1".to_string()),
+            ),
+            (
+                AbsolutePath::new("/nested/object"),
+                Value::String("Nested Object Resolved".to_string()),
+            ),
+        ]);
+
+        // Input contains a mix of valid and invalid placeholders
+        let input = "Valid: {/data/key1}, Invalid: {relative/key}, Another: {/nested/object}, Broken: {missing_brace";
+
+        // Resolve the embedded placeholders
+        let result = resolve_embedded_refs(input, &source_map);
+
+        // Expected output
+        let expected = Value::String(
+    "Valid: Resolved Key1, Invalid: {relative/key}, Another: Nested Object Resolved, Broken: {missing_brace".to_string(),
+);
+
+        // Assert that the result matches the expected output
+        assert_eq!(result, expected);
+    }
 
     #[test]
     fn test_resolve_values_with_absolute_paths() {

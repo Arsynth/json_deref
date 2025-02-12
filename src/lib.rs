@@ -1,8 +1,10 @@
 mod parsing;
 
+use parsing::{
+    collect_all_absolute_paths, expand_absolute_paths, extract_values_by_paths, make_deps_path_map, path::{AbsolutePath, RelativePath}, values_resolving::{resolve_recursive, resolve_values}
+};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use parsing::{expand_absolute_paths, extract_values_by_paths, make_deps_path_map, path::{AbsolutePath, RelativePath}, values_resolving::resolve_values};
 use std::collections::{HashMap, HashSet};
 
 /// Resolves JSON and returns a Value
@@ -19,7 +21,12 @@ pub fn resolve_json(input: &Value) -> Value {
     }
 
     let mut extracted_values = HashMap::new();
-    extract_values_by_paths(&json_with_absolute_paths, &paths, &Default::default(), &mut extracted_values);
+    extract_values_by_paths(
+        &json_with_absolute_paths,
+        &paths,
+        &Default::default(),
+        &mut extracted_values,
+    );
 
     resolve_values(&json_with_absolute_paths, &extracted_values)
 }
@@ -41,4 +48,12 @@ where
 {
     let input = serde_json::from_reader(reader)?;
     resolve_json_to_object(&input)
+}
+
+pub fn resolve_template_with_source(template: &Value, source: &Value) -> Value {
+    // Build a HashMap for all absolute paths in the source JSON
+    let mut source_map = HashMap::new();
+    collect_all_absolute_paths(source, &AbsolutePath::new("/"), &mut source_map);
+
+    resolve_recursive(template, &source_map)
 }
