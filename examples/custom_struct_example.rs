@@ -12,7 +12,7 @@ struct Response {
 #[allow(dead_code)]
 struct Profile {
     bio: String,
-    age: String,
+    age: u32,
 }
 
 fn main() {

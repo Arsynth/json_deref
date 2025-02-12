@@ -1,6 +1,5 @@
 use json_deref::resolve_json_reader_to_object;
 use serde::Deserialize;
-use std::fs::File;
 
 #[derive(Deserialize, Debug)]
 #[allow(dead_code)]
@@ -12,7 +11,7 @@ struct Response {
 #[allow(dead_code)]
 struct Profile {
     bio: String,
-    age: String,
+    age: u32,
 }
 
 fn main() {
