@@ -1,11 +1,152 @@
 mod parsing;
 
 use parsing::{
-    collect_all_absolute_paths, expand_absolute_paths, extract_values_by_paths, make_deps_path_map, path::{AbsolutePath, RelativePath}, values_resolving::{resolve_recursive, resolve_values}
+    collect_all_absolute_paths, expand_absolute_paths, extract_values_by_paths, make_deps_path_map,
+    path::{AbsolutePath, RelativePath},
+    values_resolving::{resolve_recursive, resolve_values},
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+
+/// A trait to add convenient JSON template and resolution methods for serde_json::Value.
+pub trait JsonResolvableFunctions {
+    /// Resolve JSON placeholders within itself.
+    fn resolve_internal_dependencies(&self) -> Value;
+
+    /// Resolve the JSON as a template using another JSON as a source.
+    ///
+    /// - `source`: The source JSON containing the values for placeholders.
+    fn resolve_template_with_source(&self, source: &Value) -> Value;
+}
+
+impl JsonResolvableFunctions for Value {
+    /// Resolves internal dependencies within the JSON object.
+    ///
+    /// This uses the JSON itself as the source for resolving placeholders. Placeholders
+    /// can reference fields in the JSON using either:
+    /// - **Absolute paths**: `{/path/to/value}`
+    /// - **Relative paths**:
+    ///   - `{field_name}`: Refers to sibling fields in the same object.
+    ///   - `{../../parent_field}`: Refers to fields higher up in the hierarchy.
+    ///
+    /// If a placeholder cannot be resolved (e.g., nonexistent paths), it is left unchanged.
+    ///
+    /// ## Supported JSON Value Types:
+    /// - Strings
+    /// - Numbers
+    /// - Booleans
+    /// - Arrays
+    /// - Objects
+    /// - Null
+    ///
+    /// ## Example:
+    /// ```
+    /// use serde_json::json;
+    /// use json_deref::JsonResolvableFunctions;
+    ///
+    /// let input = json!({
+    ///     "string_field": "Static Value",
+    ///     "number_field": 123,
+    ///     "boolean_field": true,
+    ///     "null_field": null,
+    ///     "absolute_field": "{/string_field}", // Absolute path
+    ///     "relative_field": "{string_field}", // Sibling reference
+    ///     "embedded_field": "Embedded: {string_field}", // Embedded dependency
+    ///     "object_field": {
+    ///         "parent_field": "{../relative_field}", // Resolves a field from parent object. Note that the dependencies will not be resolved recursively.
+    ///         "out_of_bounds_field": "{../../boolean_field}" // Also resolves a field from parent object
+    ///     },
+    ///     "array_field": [
+    ///         "Static Value", // Static value
+    ///         "{../number_field}" // Sibling reference in array
+    ///     ],
+    ///     "unresolvable_field": "{/nonexistent}" // Unresolvable absolute path
+    /// });
+    ///
+    /// let resolved = input.resolve_internal_dependencies();
+    ///
+    /// assert_eq!(resolved, json!({
+    ///     "string_field": "Static Value", // Original value preserved
+    ///     "number_field": 123, // Original value preserved
+    ///     "boolean_field": true, // Original boolean preserved
+    ///     "null_field": null, // Null value preserved
+    ///     "absolute_field": "Static Value", // Resolved using absolute path
+    ///     "relative_field": "Static Value", // Resolved sibling reference
+    ///     "embedded_field": "Embedded: Static Value", // Embedded dependency resolved
+    ///     "object_field": {
+    ///         "parent_field": "{/string_field}", // Resolves a field from parent object. Note that the dependencies will not be resolved recursively.
+    ///         "out_of_bounds_field": true // Also resolves a field from parent object
+    ///     },
+    ///     "array_field": [
+    ///         "Static Value", // Static value unchanged
+    ///         123 // Resolved sibling reference
+    ///     ],
+    ///     "unresolvable_field": "{/nonexistent}" // Unresolved dependency remains unchanged
+    /// }));
+    /// ```
+    fn resolve_internal_dependencies(&self) -> Value {
+        resolve_json(self)
+    }
+
+    /// Resolves the JSON as a template, using another JSON as the source for placeholders.
+    ///
+    /// The current JSON object acts as a template, and placeholders (e.g., `{/path/to/value}`) are
+    /// resolved using the provided source JSON. All placeholders are replaced with their resolved
+    /// values if they exist in the source JSON. Invalid or unresolvable placeholders remain unchanged.
+    ///
+    /// # Supported JSON Types:
+    /// - Strings
+    /// - Numbers
+    /// - Booleans
+    /// - Arrays
+    /// - Objects
+    /// - Null
+    ///
+    /// # Example:
+    /// ```
+    /// use serde_json::json;
+    /// use json_deref::JsonResolvableFunctions;
+    ///
+    /// let template = json!({
+    ///     "string_field": "{/data/string}",
+    ///     "number_field": "{/data/number}",
+    ///     "boolean_field": "{/data/boolean}",
+    ///     "array_field": "{/data/array}",
+    ///     "object_field": "{/data/object}",
+    ///     "null_field": "{/data/null}",
+    ///     "embedded_field": "Referenced: {/data/string}", // Embedded dependency
+    ///     "unresolvable_field": "{/data/nonexistent}" // Unresolvable path
+    /// });
+    ///
+    /// let source = json!({
+    ///     "data": {
+    ///         "string": "String Value",
+    ///         "number": 123,
+    ///         "boolean": false,
+    ///         "array": ["a", "b", "c"],
+    ///         "object": {"key": "value"},
+    ///         "null": null
+    ///     }
+    /// });
+    ///
+    /// let resolved = template.resolve_template_with_source(&source);
+    ///
+    /// assert_eq!(resolved, json!({
+    ///     "string_field": "String Value",
+    ///     "number_field": 123,
+    ///     "boolean_field": false,
+    ///     "array_field": ["a", "b", "c"],
+    ///     "object_field": {"key": "value"},
+    ///     "null_field": null,
+    ///     "embedded_field": "Referenced: String Value",
+    ///     "unresolvable_field": "{/data/nonexistent}" // Paths not found in source remain unchanged
+    /// }));
+    /// ```
+    fn resolve_template_with_source(&self, source: &Value) -> Value {
+        resolve_template_with_source(self, source)
+    }
+}
 
 /// Resolves JSON and returns a Value
 pub fn resolve_json(input: &Value) -> Value {

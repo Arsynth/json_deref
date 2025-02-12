@@ -62,11 +62,6 @@ impl RelativePath {
     pub fn new(path: &str) -> Self {
         RelativePath(path.to_string())
     }
-
-    /// Get the internal string
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
 }
 
 #[cfg(test)]
@@ -82,7 +77,7 @@ mod tests {
     #[test]
     fn test_relative_path_creation() {
         let rel_path = RelativePath::new("../another/path");
-        assert_eq!(rel_path.as_str(), "../another/path");
+        assert_eq!(rel_path.0, "../another/path");
     }
 
     #[test]

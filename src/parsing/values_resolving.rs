@@ -116,7 +116,6 @@ pub(crate) fn resolve_recursive(
 mod tests {
     use super::AbsolutePath;
     use super::*;
-    use serde_json::json;
     use std::collections::HashMap;
 
     #[test]
@@ -153,8 +152,6 @@ mod tests {
 
     #[test]
     fn test_resolve_embedded_refs_with_invalid_paths() {
-        use serde_json::json;
-
         // Sample source_map with correct absolute paths
         let source_map: HashMap<AbsolutePath, Value> = HashMap::from([
             (
